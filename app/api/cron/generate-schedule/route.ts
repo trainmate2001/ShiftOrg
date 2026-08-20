@@ -56,7 +56,7 @@ export async function GET(request: Request) {
   const cRes = await fetch(
     `${SUPABASE_URL}/rest/v1/employee_constraints` +
     `?date_iso=gte.${weekStart}&date_iso=lte.${weekEnd}` +
-    `&select=employee_id,date_iso,constraint_type,note&order=date_iso.asc`,
+    `&approved=eq.true&select=employee_id,date_iso,constraint_type,note&order=date_iso.asc`,
     { headers: dbHeaders(), cache: "no-store" }
   );
   if (!cRes.ok) {

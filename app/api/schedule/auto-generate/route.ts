@@ -82,7 +82,7 @@ export async function POST(_request: Request) {
   const cRes = await fetch(
     `${SUPABASE_URL}/rest/v1/employee_constraints` +
     `?date_iso=gte.${weekStart}&date_iso=lte.${weekEnd}` +
-    `&select=employee_id,date_iso,constraint_type,note&order=date_iso.asc`,
+    `&approved=eq.true&select=employee_id,date_iso,constraint_type,note&order=date_iso.asc`,
     {
       headers: { apikey: constraintKey, Authorization: `Bearer ${constraintKey}`, Accept: "application/json" },
       cache: "no-store",

@@ -11,17 +11,18 @@ import ChangePasswordForm from "@/components/ChangePasswordForm";
 
 const MAX_CONSTRAINTS = 10;
 const DAYS_HE = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
+const DAY_LETTERS_HE = ["א", "ב", "ג", "ד", "ה", "ו", "ש"];
 const MONTHS_HE = ["ינואר","פברואר","מרץ","אפריל","מאי","יוני","יולי","אוגוסט","ספטמבר","אוקטובר","נובמבר","דצמבר"];
 
-type DbConstraint = { id: string; date_iso: string; constraint_type: ConstraintType; note: string };
-type Constraint = { id: string; date: string; dateISO: string; constraintType: ConstraintType; note: string };
+type DbConstraint = { id: string; date_iso: string; constraint_type: ConstraintType; note: string; is_special: boolean; approved: boolean };
+type Constraint = { id: string; date: string; dateISO: string; constraintType: ConstraintType; note: string; isSpecial: boolean; approved: boolean };
 type ScheduleRow = { date: string; period: "morning" | "evening"; employee_id: string; shift_template_id: string };
 type ShiftEntry = { date: string; period: "morning" | "evening"; timeRange: string; dayName: string; isFriday: boolean; isSaturday: boolean };
 type Profile = { id: string; fullName: string; displayName: string; email: string; role: string };
 
 function dbToConstraint(db: DbConstraint): Constraint {
   const [y, m, d] = db.date_iso.split("-").map(Number);
-  return { id: db.id, date: `${d}/${m}/${y}`, dateISO: db.date_iso, constraintType: db.constraint_type, note: db.note ?? "" };
+  return { id: db.id, date: `${d}/${m}/${y}`, dateISO: db.date_iso, constraintType: db.constraint_type, note: db.note ?? "", isSpecial: db.is_special, approved: db.approved };
 }
 
 function todayISO(): string {
@@ -36,7 +37,7 @@ function isoPlus(iso: string, days: number): string {
 }
 
 function countInPeriod(constraints: Constraint[], period: SchedulingPeriod): number {
-  return constraints.filter(c => c.dateISO >= period.start && c.dateISO <= period.end).length;
+  return constraints.filter(c => !c.isSpecial && c.dateISO >= period.start && c.dateISO <= period.end).length;
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -72,6 +73,7 @@ export default function EmployeeDashboardPage() {
   const [selectedDay, setSelectedDay]           = useState<string | null>(null);
   const [dayConstraintType, setDayConstraintType] = useState<ConstraintType>("all-day");
   const [dayNote, setDayNote]                   = useState("");
+  const [dayIsSpecial, setDayIsSpecial]         = useState(false);
 
   // Published schedule banner
   const [publishedWeek, setPublishedWeek] = useState<string | null>(null);
@@ -291,12 +293,13 @@ export default function EmployeeDashboardPage() {
     try {
       const res = await fetch("/api/employee-constraints", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dateISO: selectedDay, constraintType: dayConstraintType, note: dayNote }),
+        body: JSON.stringify({ dateISO: selectedDay, constraintType: dayConstraintType, note: dayNote, isSpecial: dayIsSpecial }),
       });
       const json = await res.json();
       if (!res.ok) { setSubmitError(json.error ?? `HTTP ${res.status}`); return; }
       await loadConstraints();
       setDayNote("");
+      setDayIsSpecial(false);
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : "שגיאה בשמירה");
     } finally { setSubmitting(false); }
@@ -353,6 +356,7 @@ export default function EmployeeDashboardPage() {
   const pastConstraints     = constraints.filter(c => c.dateISO < today).sort((a, b) => b.dateISO.localeCompare(a.dateISO));
   const conflictingShifts   = shifts.filter(s => constraints.some(c => {
     if (c.dateISO !== s.date) return false;
+    if (!c.approved) return false;
     if (c.constraintType === "all-day") return true;
     return c.constraintType.startsWith(s.period === "morning" ? "morning" : "evening");
   }));
@@ -544,9 +548,9 @@ export default function EmployeeDashboardPage() {
 
             {/* Day headers */}
             <div className="grid grid-cols-7 mb-1">
-              {DAYS_HE.map(d => (
-                <div key={d} className="text-center text-xs font-semibold text-gray-400 py-1">
-                  {d.slice(0, 1)}
+              {DAY_LETTERS_HE.map((d, i) => (
+                <div key={i} className="text-center text-xs font-semibold text-gray-400 py-1">
+                  {d}
                 </div>
               ))}
             </div>
@@ -613,7 +617,14 @@ export default function EmployeeDashboardPage() {
                 <div className="space-y-1.5">
                   {selectedDayConstraints.map(c => (
                     <div key={c.id} className="flex items-center justify-between gap-2 text-xs bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
-                      <span className="text-gray-700">{CONSTRAINT_LABELS[c.constraintType]}{c.note ? ` — ${c.note}` : ""}</span>
+                      <span className="flex items-center gap-1.5 flex-wrap text-gray-700">
+                        {CONSTRAINT_LABELS[c.constraintType]}{c.note ? ` — ${c.note}` : ""}
+                        {c.isSpecial && (
+                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${c.approved ? "bg-purple-100 text-purple-700" : "bg-amber-100 text-amber-700"}`}>
+                            מיוחד · {c.approved ? "אושר" : "ממתין לאישור"}
+                          </span>
+                        )}
+                      </span>
                       {!isLocked && (
                         <button
                           onClick={() => handleDelete(c.id)}
@@ -630,8 +641,14 @@ export default function EmployeeDashboardPage() {
 
               {isLocked ? null : isPastDay ? (
                 <p className="text-xs text-gray-400">לא ניתן להוסיף אילוץ לתאריך שעבר.</p>
-              ) : atPeriodLimit ? (
-                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">הגעת למגבלת {MAX_CONSTRAINTS} אילוצים לתקופה זו.</p>
+              ) : (atPeriodLimit && !dayIsSpecial) ? (
+                <div className="space-y-2">
+                  <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">הגעת למגבלת {MAX_CONSTRAINTS} אילוצים לתקופה זו.</p>
+                  <label className="flex items-center gap-2 text-xs text-gray-600">
+                    <input type="checkbox" checked={dayIsSpecial} onChange={e => setDayIsSpecial(e.target.checked)} />
+                    בקשה מיוחדת — לא נספרת במגבלה, טעונה אישור מנהל
+                  </label>
+                </div>
               ) : (
                 <form onSubmit={handleDaySubmit} className="space-y-2">
                   <div className="flex gap-2">
@@ -658,6 +675,10 @@ export default function EmployeeDashboardPage() {
                     maxLength={120}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400"
                   />
+                  <label className="flex items-center gap-2 text-xs text-gray-600">
+                    <input type="checkbox" checked={dayIsSpecial} onChange={e => setDayIsSpecial(e.target.checked)} />
+                    בקשה מיוחדת — לא נספרת במגבלה, טעונה אישור מנהל
+                  </label>
                   {submitError && <p className="text-xs text-red-600">{submitError}</p>}
                 </form>
               )}
@@ -820,6 +841,11 @@ function ConstraintRow({ constraint: c, deleting, dayLabel, past, locked, onDele
           {CONSTRAINT_LABELS[c.constraintType]}
           {c.note && ` — ${c.note}`}
         </p>
+        {c.isSpecial && (
+          <span className={`inline-block mt-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${c.approved ? "bg-purple-100 text-purple-700" : "bg-amber-100 text-amber-700"}`}>
+            מיוחד · {c.approved ? "אושר" : "ממתין לאישור"}
+          </span>
+        )}
       </div>
       {!past && !locked && (
         <button

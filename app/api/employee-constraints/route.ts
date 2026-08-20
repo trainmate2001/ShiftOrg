@@ -58,7 +58,7 @@ export async function GET(request: Request) {
     const res = await fetch(
       `${SUPABASE_URL}/rest/v1/employee_constraints` +
         `?date_iso=gte.${from}&date_iso=lte.${to}` +
-        `&select=id,employee_id,date_iso,constraint_type,note` +
+        `&select=id,employee_id,date_iso,constraint_type,note,is_special,approved` +
         `&order=date_iso.asc`,
       {
         headers: {
@@ -83,7 +83,7 @@ export async function GET(request: Request) {
   const res = await fetch(
     `${SUPABASE_URL}/rest/v1/employee_constraints` +
       `?employee_id=eq.${encodeURIComponent(employeeId)}` +
-      `&select=id,date_iso,constraint_type,note` +
+      `&select=id,date_iso,constraint_type,note,is_special,approved` +
       `&order=date_iso.asc`,
     { headers: anonHeaders(), cache: "no-store" }
   );
@@ -103,7 +103,7 @@ export async function POST(request: Request) {
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
   const role = user.user_metadata?.role as string | undefined;
-  const { dateISO, constraintType, note, employeeId: bodyEmployeeId } = await request.json();
+  const { dateISO, constraintType, note, isSpecial, employeeId: bodyEmployeeId } = await request.json();
 
   let employeeId: string | undefined;
   if (bodyEmployeeId !== undefined && bodyEmployeeId !== null) {
@@ -131,6 +131,9 @@ export async function POST(request: Request) {
       date_iso:        dateISO,
       constraint_type: constraintType,
       note:            note ?? "",
+      is_special:      !!isSpecial,
+      // Managers add constraints already-approved; employee-submitted specials wait for approval.
+      approved:        isSpecial ? role === "manager" : true,
     }),
   });
 
@@ -180,4 +183,32 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: `Supabase ${res.status}: ${body}` }, { status: res.status });
   }
   return new NextResponse(null, { status: 204 });
+}
+
+// PATCH /api/employee-constraints
+// Body: { id, approved }
+// Manager-only — approves (or revokes approval of) a special constraint so it
+// takes effect in schedule generation.
+export async function PATCH(request: Request) {
+  const user = await getUser();
+  if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  if (user.user_metadata?.role !== "manager") {
+    return NextResponse.json({ error: "Forbidden — only a manager can approve constraints" }, { status: 403 });
+  }
+
+  const { id, approved } = await request.json();
+  if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
+
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/employee_constraints?id=eq.${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+      headers: anonHeaders({ Prefer: "return=representation" }),
+      body: JSON.stringify({ approved: !!approved }),
+    }
+  );
+
+  const body = await res.text();
+  if (!res.ok) return NextResponse.json({ error: `Supabase ${res.status}: ${body}` }, { status: res.status });
+  return NextResponse.json(JSON.parse(body));
 }

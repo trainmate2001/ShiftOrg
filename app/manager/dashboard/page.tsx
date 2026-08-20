@@ -878,7 +878,7 @@ export default function ManagerDashboardPage() {
   const [shiftTypesSaving,     setShiftTypesSaving]     = useState(false);
 
   // ── Upcoming-week constraints overview ────────────────────────────────────
-  type WeekConstraintRow = { id: string; employee_id: string; date_iso: string; constraint_type: string; note: string };
+  type WeekConstraintRow = { id: string; employee_id: string; date_iso: string; constraint_type: string; note: string; is_special: boolean; approved: boolean };
   const [weekConstraints,        setWeekConstraints]        = useState<WeekConstraintRow[]>([]);
   const [weekConstraintsLoading, setWeekConstraintsLoading] = useState(false);
   const [weekConstraintsError,   setWeekConstraintsError]   = useState<string | null>(null);
@@ -898,6 +898,7 @@ export default function ManagerDashboardPage() {
   const [addingConstraint,      setAddingConstraint]      = useState(false);
   const [addConstraintError,    setAddConstraintError]    = useState<string | null>(null);
   const [deletingConstraintId,  setDeletingConstraintId]  = useState<string | null>(null);
+  const [approvingConstraintId, setApprovingConstraintId] = useState<string | null>(null);
 
   // ── Auth / profile ─────────────────────────────────────────────────────────
   const [profile, setProfile]           = useState<Profile | null>(null);
@@ -982,6 +983,7 @@ export default function ManagerDashboardPage() {
     date_iso:        string;
     constraint_type: string;
     note:            string;
+    approved:        boolean;
   };
 
   async function generateNewSchedule() {
@@ -1041,7 +1043,7 @@ export default function ManagerDashboardPage() {
         const res = await fetch(`/api/employee-constraints?from=${startDate}&to=${endDate}`);
         const json = await res.json();
         if (res.ok) {
-          constraints = (json as ConstraintRow[]).map((r) => ({
+          constraints = (json as ConstraintRow[]).filter((r) => r.approved !== false).map((r) => ({
             employee:       r.employee_id,
             date:           r.date_iso,
             constraintType: r.constraint_type as ConstraintType,
@@ -1854,6 +1856,22 @@ export default function ManagerDashboardPage() {
     }
   }
 
+  async function handleApproveConstraint(id: string) {
+    setApprovingConstraintId(id);
+    try {
+      const res = await fetch("/api/employee-constraints", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, approved: true }),
+      });
+      if (res.ok) {
+        setWeekConstraints((prev) => prev.map((c) => (c.id === id ? { ...c, approved: true } : c)));
+      }
+    } finally {
+      setApprovingConstraintId(null);
+    }
+  }
+
   // Load constraints as soon as the manager profile is confirmed, and again
   // whenever the manager switches between the current and next period.
   useEffect(() => {
@@ -2337,7 +2355,7 @@ export default function ManagerDashboardPage() {
                                             :             "bg-indigo-100 text-indigo-700 border-indigo-200";
                             const label = isAllDay ? "כל היום" : isMorning ? "בוקר" : "ערב";
                             return (
-                              <div key={c.id} className={`relative inline-flex flex-col items-center px-2 py-1 pl-4 rounded border text-xs ${badgeCls}`}>
+                              <div key={c.id} className={`relative inline-flex flex-col items-center px-2 py-1 pl-4 rounded border text-xs ${badgeCls} ${c.is_special ? "ring-2 ring-purple-400" : ""}`}>
                                 <button
                                   onClick={() => void handleDeleteConstraint(c.id)}
                                   disabled={deletingConstraintId === c.id}
@@ -2349,6 +2367,20 @@ export default function ManagerDashboardPage() {
                                 <span className="font-semibold">{DAYS[dow]} {formatDateShort(c.date_iso)}</span>
                                 <span>{label}</span>
                                 {c.note && <span className="text-gray-600 font-normal">{c.note}</span>}
+                                {c.is_special && (
+                                  <span className="mt-0.5 font-semibold text-purple-700">
+                                    מיוחד {c.approved ? "· אושר" : "· ממתין"}
+                                  </span>
+                                )}
+                                {c.is_special && !c.approved && (
+                                  <button
+                                    onClick={() => void handleApproveConstraint(c.id)}
+                                    disabled={approvingConstraintId === c.id}
+                                    className="mt-1 px-2 py-0.5 rounded bg-purple-600 hover:bg-purple-700 text-white font-semibold disabled:opacity-50"
+                                  >
+                                    {approvingConstraintId === c.id ? "..." : "אשר"}
+                                  </button>
+                                )}
                               </div>
                             );
                           })}
